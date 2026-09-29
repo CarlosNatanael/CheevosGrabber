@@ -4,6 +4,8 @@ import requests
 import os
 import json
 import threading
+import io
+from PIL import Image
 
 # Configurações da API
 API_URL = "https://retroachievements.org/API/API_GetGameExtended.php"
@@ -13,7 +15,6 @@ CONFIG_FILE = "config.json"
 class BadgeDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Pode alterar o nome depois, deixei uma sugestão integrada
         self.title("CheevosGrabber") 
         self.geometry("450x600")
         
@@ -31,7 +32,6 @@ class BadgeDownloaderApp(ctk.CTk):
         self.setup_ui()
 
     def setup_ui(self):
-        # 1. Frame de Autenticação
         self.auth_frame = ctk.CTkFrame(self)
         self.auth_frame.pack(pady=20, padx=20, fill="x")
 
@@ -75,14 +75,19 @@ class BadgeDownloaderApp(ctk.CTk):
 
         self.ent_dir = ctk.CTkEntry(self.dir_frame)
         self.ent_dir.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.update_dir_entry() # Preenche com a pasta guardada no config
+        self.update_dir_entry()
 
         self.btn_browse = ctk.CTkButton(self.dir_frame, text="Procurar...", width=80, command=self.browse_folder)
         self.btn_browse.pack(side="right")
 
-        # Botão Principal
-        self.btn_download = ctk.CTkButton(self.dl_frame, text="Baixar Badges", command=self.start_download)
-        self.btn_download.pack(pady=15)
+        self.btn_frame = ctk.CTkFrame(self.dl_frame, fg_color="transparent")
+        self.btn_frame.pack(pady=15)
+
+        self.btn_preview = ctk.CTkButton(self.btn_frame, text="Visualizar Template", width=140, fg_color="#E67E22", hover_color="#D35400", command=self.open_preview)
+        self.btn_preview.pack(side="left", padx=5)
+
+        self.btn_download = ctk.CTkButton(self.btn_frame, text="Baixar Badges", width=140, command=self.start_download)
+        self.btn_download.pack(side="right", padx=5)
 
         # 3. Status
         self.lbl_status = ctk.CTkLabel(self, text="", text_color="gray")
@@ -189,6 +194,76 @@ class BadgeDownloaderApp(ctk.CTk):
 
     def update_status(self, text, color):
         self.after(0, lambda: self.lbl_status.configure(text=text, text_color=color))
+
+    def open_preview(self):
+        user = self.ent_user.get().strip()
+        api_key = self.ent_key.get().strip()
+        game_id = self.ent_game.get().strip()
+
+        if not user or not api_key or not game_id:
+            self.lbl_status.configure(text="Erro: Preencha os campos para visualizar!", text_color="red")
+            return
+
+        # Cria a janela de visualização
+        preview_win = ctk.CTkToplevel(self)
+        preview_win.title(f"Template do Jogo {game_id}")
+        preview_win.geometry("700x500")
+        preview_win.grab_set() # Foca nesta janela
+
+        # Frame rolável para o grid de imagens
+        scroll_frame = ctk.CTkScrollableFrame(preview_win, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        lbl_loading = ctk.CTkLabel(scroll_frame, text="Carregando template em memória...", font=("Arial", 14))
+        lbl_loading.grid(row=0, column=0, pady=20)
+
+        # Inicia a thread de carregamento
+        threading.Thread(target=self.load_preview_data, args=(user, api_key, game_id, scroll_frame, lbl_loading), daemon=True).start()
+
+    def load_preview_data(self, user, api_key, game_id, scroll_frame, lbl_loading):
+        try:
+            params = {"z": user, "y": api_key, "i": game_id}
+            response = requests.get(API_URL, params=params)
+            
+            if response.status_code != 200:
+                self.after(0, lambda: lbl_loading.configure(text="Erro na API. Credenciais inválidas?", text_color="red"))
+                return
+            
+            data = response.json()
+            if "Achievements" not in data or not data["Achievements"]:
+                self.after(0, lambda: lbl_loading.configure(text="Nenhuma conquista encontrada.", text_color="red"))
+                return
+
+            achievements = data["Achievements"]
+            self.after(0, lambda: lbl_loading.destroy())
+
+            columns = 10
+            row = 0
+            col = 0
+
+            for ach_id, ach_data in achievements.items():
+                badge_name = ach_data.get("BadgeName")
+                if badge_name:
+                    img_url = BADGE_URL.format(badge_name)
+                    img_res = requests.get(img_url)
+                    
+                    if img_res.status_code == 200:
+                        image_data = Image.open(io.BytesIO(img_res.content))
+                        ctk_img = ctk.CTkImage(light_image=image_data, dark_image=image_data, size=(64, 64))
+
+                        self.after(0, self.add_image_to_grid, scroll_frame, ctk_img, row, col)
+                        
+                        col += 1
+                        if col >= columns:
+                            col = 0
+                            row += 1
+
+        except Exception as e:
+            self.after(0, lambda: lbl_loading.configure(text=f"Erro: {str(e)}", text_color="red"))
+
+    def add_image_to_grid(self, frame, ctk_img, row, col):
+        lbl = ctk.CTkLabel(frame, image=ctk_img, text="")
+        lbl.grid(row=row, column=col, padx=0, pady=0)
 
 if __name__ == "__main__":
     app = BadgeDownloaderApp()
