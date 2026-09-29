@@ -1,40 +1,95 @@
-from tkinter import filedialog
-from PIL import Image, ImageTk
-import customtkinter as ctk
-from PIL import Image
-import threading
-import requests
+import io
 import json
 import math
-import re
 import os
-import io
+import re
+import sys
+import threading
+from tkinter import filedialog
 
-# API Configurations
+import customtkinter as ctk
+import requests
+from PIL import Image
+
+# API configuration
 API_URL = "https://retroachievements.org/API/API_GetGameExtended.php"
 BADGE_URL = "https://media.retroachievements.org/Badge/{}.png"
 CONFIG_FILE = "config.json"
 
+# Gauntlet layout
+BADGE_SIZE = 64
+GRID_COLUMNS = 10
+MARGIN_OPTIONS = ["Margin: 0px", "Margin: 1px", "Margin: 2px", "Margin: 4px"]
+REQUEST_TIMEOUT = 30
+
+
+def resource_path(filename):
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, filename)
+
+
+def apply_icon(window):
+    icon_path = resource_path("icon.ico")
+    if not os.path.exists(icon_path):
+        return
+
+    def _set_icon():
+        try:
+            window.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Could not set window icon: {e}")
+
+    window.after(250, _set_icon)
+
+
+def fetch_achievements(user, api_key, game_id):
+    params = {"z": user, "y": api_key, "i": game_id}
+    response = requests.get(API_URL, params=params, timeout=REQUEST_TIMEOUT)
+
+    if response.status_code != 200:
+        raise ValueError("API Error. Are the credentials correct?")
+
+    data = response.json()
+    if "Achievements" not in data or not data["Achievements"]:
+        raise ValueError("No achievements found for this ID.")
+
+    achievements = list(data["Achievements"].values())
+    achievements.sort(key=lambda a: (int(a.get("DisplayOrder", 0)), int(a.get("ID", 0))))
+    return achievements
+
+
+def build_gauntlet_image(images, margin):
+    rows = math.ceil(len(images) / GRID_COLUMNS)
+    total_width = GRID_COLUMNS * BADGE_SIZE + (GRID_COLUMNS - 1) * margin
+    total_height = rows * BADGE_SIZE + (rows - 1) * margin
+
+    canvas = Image.new("RGBA", (total_width, total_height), (0, 0, 0, 0))
+    for index, img in enumerate(images):
+        col_idx = index % GRID_COLUMNS
+        row_idx = index // GRID_COLUMNS
+        x = col_idx * (BADGE_SIZE + margin)
+        y = row_idx * (BADGE_SIZE + margin)
+        canvas.paste(img, (x, y))
+    return canvas
+
+
+def parse_margin(label):
+    return int(label.replace("Margin:", "").replace("px", "").strip())
+
+
 class BadgeDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("CheevosGrabber") 
+        self.title("CheevosGrabber")
         self.geometry("450x600")
+        apply_icon(self)
 
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            icon_path = os.path.join(script_dir, "icon.ico")
-            
-            self.iconbitmap(icon_path)
-        except Exception as e:
-            print(f"Error {e}")
-
-        # Variáveis de estado
+        # State variables
         self.saved_user = ""
         self.saved_key = ""
-        self.save_dir = os.path.join(os.getcwd(), "badges") # Default folder
+        self.save_dir = os.path.join(os.getcwd(), "badges")  # Default folder
         self.remember = False
-        
+
         # Visual configuration
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
@@ -67,7 +122,7 @@ class BadgeDownloaderApp(ctk.CTk):
         self.chk_remember = ctk.CTkCheckBox(self.auth_frame, text="Remember me", variable=self.chk_remember_var)
         self.chk_remember.pack(pady=(5, 15), padx=20, anchor="w")
 
-        # Download Frame
+        # Download frame
         self.dl_frame = ctk.CTkFrame(self)
         self.dl_frame.pack(pady=10, padx=20, fill="x")
 
@@ -77,7 +132,7 @@ class BadgeDownloaderApp(ctk.CTk):
         self.ent_game = ctk.CTkEntry(self.dl_frame, placeholder_text="Game ID (Ex: 1445)")
         self.ent_game.pack(pady=10, padx=20, fill="x")
 
-        # Folder Selection Section
+        # Folder selection
         self.lbl_dir = ctk.CTkLabel(self.dl_frame, text="Save to folder:", anchor="w")
         self.lbl_dir.pack(padx=20, fill="x")
 
@@ -91,7 +146,7 @@ class BadgeDownloaderApp(ctk.CTk):
         self.btn_browse = ctk.CTkButton(self.dir_frame, text="Browse...", width=80, command=self.browse_folder)
         self.btn_browse.pack(side="right")
 
-        # Action Buttons
+        # Action buttons
         self.btn_frame = ctk.CTkFrame(self.dl_frame, fg_color="transparent")
         self.btn_frame.pack(pady=15)
 
@@ -107,6 +162,9 @@ class BadgeDownloaderApp(ctk.CTk):
         # Status
         self.lbl_status = ctk.CTkLabel(self, text="", text_color="gray")
         self.lbl_status.pack(pady=10)
+
+    def update_status(self, text, color):
+        self.after(0, lambda: self.lbl_status.configure(text=text, text_color=color))
 
     def update_dir_entry(self):
         self.ent_dir.configure(state="normal")
@@ -125,26 +183,21 @@ class BadgeDownloaderApp(ctk.CTk):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                    self.saved_user = data.get("user", "")
-                    self.saved_key = data.get("api_key", "")
-                    self.save_dir = data.get("save_dir", self.save_dir)
-                    self.remember = data.get("remember", False)
+                self.saved_user = data.get("user", "")
+                self.saved_key = data.get("api_key", "")
+                self.save_dir = data.get("save_dir", self.save_dir)
+                self.remember = data.get("remember", False)
             except Exception:
                 pass
 
     def save_config(self):
+        remember = self.chk_remember_var.get()
         data = {
             "save_dir": self.save_dir,
-            "remember": self.chk_remember_var.get()
+            "remember": remember,
+            "user": self.ent_user.get().strip() if remember else "",
+            "api_key": self.ent_key.get().strip() if remember else "",
         }
-        
-        if self.chk_remember_var.get():
-            data["user"] = self.ent_user.get().strip()
-            data["api_key"] = self.ent_key.get().strip()
-        else:
-            data["user"] = ""
-            data["api_key"] = ""
-            
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f)
 
@@ -166,52 +219,32 @@ class BadgeDownloaderApp(ctk.CTk):
 
     def download_process(self, user, api_key, game_id, target_dir):
         try:
-            params = {"z": user, "y": api_key, "i": game_id}
-            response = requests.get(API_URL, params=params)
-            
-            if response.status_code != 200:
-                self.update_status("API Error. Are the credentials correct?", "red")
-                return
-            
-            data = response.json()
-            if "Achievements" not in data or not data["Achievements"]:
-                self.update_status("No achievements found for this ID.", "red")
-                return
-            
-            achievements_list = list(data["Achievements"].values())
-            achievements_list.sort(key=lambda x: (int(x.get("DisplayOrder", 0)), int(x.get("ID", 0))))
+            achievements = fetch_achievements(user, api_key, game_id)
 
             folder_name = os.path.join(target_dir, f"badges_{game_id}")
             os.makedirs(folder_name, exist_ok=True)
 
-            total = len(achievements_list)
-            count = 0
-
-            for index, ach_data in enumerate(achievements_list, start=1):
+            total = len(achievements)
+            for index, ach_data in enumerate(achievements, start=1):
                 badge_name = ach_data.get("BadgeName")
                 if badge_name:
-                    img_url = BADGE_URL.format(badge_name)
-                    img_res = requests.get(img_url)
-                    
+                    img_res = requests.get(BADGE_URL.format(badge_name), timeout=REQUEST_TIMEOUT)
                     if img_res.status_code == 200:
-                        # Adds a numeric prefix to enforce order in the file explorer
+                        # Numeric prefix keeps the site's order in the file explorer
                         file_name = f"{index:03d}_{badge_name}.png"
-                        save_path = os.path.join(folder_name, file_name)
-                        with open(save_path, "wb") as f:
+                        with open(os.path.join(folder_name, file_name), "wb") as f:
                             f.write(img_res.content)
-                
-                count += 1
-                self.update_status(f"Downloading badges: {count}/{total}...", "white")
+
+                self.update_status(f"Downloading badges: {index}/{total}...", "white")
 
             self.update_status(f"Completed! Saved to:\n{folder_name}", "green")
 
+        except ValueError as e:
+            self.update_status(str(e), "red")
         except Exception as e:
-            self.update_status(f"Unexpected error: {str(e)}", "red")
+            self.update_status(f"Unexpected error: {e}", "red")
         finally:
             self.after(0, lambda: self.btn_download.configure(state="normal"))
-
-    def update_status(self, text, color):
-        self.after(0, lambda: self.lbl_status.configure(text=text, text_color=color))
 
     def open_preview(self):
         user = self.ent_user.get().strip()
@@ -222,76 +255,104 @@ class BadgeDownloaderApp(ctk.CTk):
             self.lbl_status.configure(text="Error: Fill in the fields to preview!", text_color="red")
             return
 
-        # Creates the preview window
         preview_win = ctk.CTkToplevel(self)
         preview_win.title(f"Game Template {game_id}")
-        preview_win.geometry("700x500")
+        preview_win.geometry("800x600")
+        apply_icon(preview_win)
         preview_win.grab_set()
 
-        # Scrollable frame for the image grid
+        # Top bar with controls (margin and save)
+        ctrl_frame = ctk.CTkFrame(preview_win)
+        ctrl_frame.pack(fill="x", padx=10, pady=10)
+
+        margin_var = ctk.StringVar(value=MARGIN_OPTIONS[0])
+        opt_margin = ctk.CTkOptionMenu(ctrl_frame, values=MARGIN_OPTIONS, variable=margin_var, state="disabled")
+        opt_margin.pack(side="left", padx=10)
+
+        btn_save = ctk.CTkButton(ctrl_frame, text="Save Template", fg_color="#27AE60", hover_color="#2ECC71", state="disabled")
+        btn_save.pack(side="right", padx=10)
+
+        # Image area
         scroll_frame = ctk.CTkScrollableFrame(preview_win, fg_color="transparent")
-        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        lbl_loading = ctk.CTkLabel(scroll_frame, text="Loading template into memory...", font=("Arial", 14))
-        lbl_loading.grid(row=0, column=0, pady=20)
+        lbl_loading = ctk.CTkLabel(scroll_frame, text="Downloading badges from the API into memory...", font=("Arial", 14))
+        lbl_loading.pack(pady=20)
 
-        # Starts the loading thread
-        threading.Thread(target=self.load_preview_data, args=(user, api_key, game_id, scroll_frame, lbl_loading), daemon=True).start()
+        img_label = ctk.CTkLabel(scroll_frame, text="")
 
-    def load_preview_data(self, user, api_key, game_id, scroll_frame, lbl_loading):
-        try:
-            params = {"z": user, "y": api_key, "i": game_id}
-            response = requests.get(API_URL, params=params)
-            
-            if response.status_code != 200:
-                self.after(0, lambda: lbl_loading.configure(text="API Error. Invalid credentials?", text_color="red"))
+        # State local to this window
+        state = {"images": [], "result": None}
+
+        def update_preview(selected_margin):
+            if not state["images"]:
                 return
-            
-            data = response.json()
-            if "Achievements" not in data or not data["Achievements"]:
-                self.after(0, lambda: lbl_loading.configure(text="No achievements found.", text_color="red"))
+            template_img = build_gauntlet_image(state["images"], parse_margin(selected_margin))
+            state["result"] = template_img
+
+            ctk_img = ctk.CTkImage(light_image=template_img, dark_image=template_img, size=template_img.size)
+            img_label.configure(image=ctk_img)
+            img_label.image = ctk_img
+
+        def save_image():
+            if state["result"] is None:
                 return
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                initialfile=f"template_game_{game_id}.png",
+                initialdir=self.save_dir,
+                title="Save Final Template",
+                filetypes=[("PNG", "*.png")],
+            )
+            if save_path:
+                state["result"].save(save_path)
+                self.update_status("Template saved successfully!", "green")
+                preview_win.destroy()
+                try:
+                    os.startfile(save_path)  # Windows only
+                except Exception:
+                    pass
 
-            achievements_list = list(data["Achievements"].values())
-            achievements_list.sort(key=lambda x: (int(x.get("DisplayOrder", 0)), int(x.get("ID", 0))))
+        opt_margin.configure(command=update_preview)
+        btn_save.configure(command=save_image)
 
-            self.after(0, lambda: lbl_loading.destroy())
+        def show_error(message):
+            self.after(0, lambda: lbl_loading.configure(text=message, text_color="red"))
 
-            columns = 10
-            row = 0
-            col = 0
+        def finalize_load(loaded_images):
+            state["images"] = loaded_images
+            lbl_loading.destroy()
+            img_label.pack(pady=10)
+            opt_margin.configure(state="normal")
+            btn_save.configure(state="normal")
+            update_preview(margin_var.get())
 
-            for ach_data in achievements_list:
-                badge_name = ach_data.get("BadgeName")
-                if badge_name:
-                    img_url = BADGE_URL.format(badge_name)
-                    img_res = requests.get(img_url)
-                    
+        def worker():
+            try:
+                achievements = fetch_achievements(user, api_key, game_id)
+                loaded_images = []
+                for ach_data in achievements:
+                    badge_name = ach_data.get("BadgeName")
+                    if not badge_name:
+                        continue
+                    img_res = requests.get(BADGE_URL.format(badge_name), timeout=REQUEST_TIMEOUT)
                     if img_res.status_code == 200:
-                        image_data = Image.open(io.BytesIO(img_res.content))
-                        ctk_img = ctk.CTkImage(light_image=image_data, dark_image=image_data, size=(64, 64))
-                        
-                        self.after(0, self.add_image_to_grid, scroll_frame, ctk_img, row, col)
-                        
-                        col += 1
-                        if col >= columns:
-                            col = 0
-                            row += 1
+                        img = Image.open(io.BytesIO(img_res.content)).convert("RGBA")
+                        loaded_images.append(img.resize((BADGE_SIZE, BADGE_SIZE)))
+                self.after(0, lambda: finalize_load(loaded_images))
+            except ValueError as e:
+                show_error(str(e))
+            except Exception as e:
+                show_error(f"Error: {e}")
 
-        except Exception as e:
-            self.after(0, lambda: lbl_loading.configure(text=f"Error: {str(e)}", text_color="red"))
-
-    def add_image_to_grid(self, frame, ctk_img, row, col):
-        lbl = ctk.CTkLabel(frame, image=ctk_img, text="")
-        lbl.grid(row=row, column=col, padx=0, pady=0)
+        threading.Thread(target=worker, daemon=True).start()
 
     def create_gauntlet_template(self):
         file_paths = filedialog.askopenfilenames(
             title="Select badges for the template",
             initialdir=self.save_dir,
-            filetypes=[("PNG Images", "*.png")]
+            filetypes=[("PNG Images", "*.png")],
         )
-
         if not file_paths:
             return
 
@@ -299,99 +360,73 @@ class BadgeDownloaderApp(ctk.CTk):
             # Natural sorting to respect 1.png, 2.png, 10.png, etc.
             def numerical_sort_key(filepath):
                 filename = os.path.basename(filepath)
-                return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
+                return [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", filename)]
 
             file_paths = sorted(file_paths, key=numerical_sort_key)
-            
-            # Opens the new preview window instead of saving directly
             self.show_gauntlet_preview(file_paths)
 
         except Exception as e:
-            self.update_status(f"Error loading files: {str(e)}", "red")
+            self.update_status(f"Error loading files: {e}", "red")
 
     def show_gauntlet_preview(self, file_paths):
-        # Creates the Toplevel window for the preview
         preview_win = ctk.CTkToplevel(self)
         preview_win.title("Gauntlet Preview")
         preview_win.geometry("800x600")
+        apply_icon(preview_win)
         preview_win.grab_set()
 
-        # Top bar with controls (Margin and Save)
+        # Top bar with controls (margin and save)
         ctrl_frame = ctk.CTkFrame(preview_win)
         ctrl_frame.pack(fill="x", padx=10, pady=10)
 
-        # Variable to store the image in memory
-        self.current_gauntlet_img = None
-
-        # Scrollable frame to display the image (useful for games with hundreds of achievements)
+        # Scrollable frame (useful for games with hundreds of achievements)
         scroll_frame = ctk.CTkScrollableFrame(preview_win, fg_color="transparent")
         scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         img_label = ctk.CTkLabel(scroll_frame, text="")
         img_label.pack(pady=10)
 
-        # Function that recreates the entire image every time the margin changes
+        # Load the images once; only the layout is rebuilt when the margin changes
+        images = [Image.open(fp).convert("RGBA").resize((BADGE_SIZE, BADGE_SIZE)) for fp in file_paths]
+        state = {"result": None}
+
         def update_preview(selected_margin):
-            margin = int(selected_margin.replace("Margin:", "").replace("px", "").strip())
-            
-            columns = 10
-            rows = math.ceil(len(file_paths) / columns)
+            template_img = build_gauntlet_image(images, parse_margin(selected_margin))
+            state["result"] = template_img
 
-            total_width = (columns * 64) + ((columns - 1) * margin if columns > 1 else 0)
-            total_height = (rows * 64) + ((rows - 1) * margin if rows > 1 else 0)
-
-            template_img = Image.new('RGBA', (total_width, total_height), (0, 0, 0, 0))
-
-            for index, fp in enumerate(file_paths):
-                img = Image.open(fp).convert("RGBA")
-                img = img.resize((64, 64))
-                col_idx = index % columns
-                row_idx = index // columns
-                
-                x = (col_idx * 64) + (col_idx * margin)
-                y = (row_idx * 64) + (row_idx * margin)
-                template_img.paste(img, (x, y))
-
-            self.current_gauntlet_img = template_img
-            
-            # Updates the CustomTkinter Image in the interface
             ctk_img = ctk.CTkImage(light_image=template_img, dark_image=template_img, size=template_img.size)
             img_label.configure(image=ctk_img)
             img_label.image = ctk_img
 
-        margin_var = ctk.StringVar(value="Margin: 0px")
-        opt_margin = ctk.CTkOptionMenu(
-            ctrl_frame, 
-            values=["Margin: 0px", "Margin: 1px", "Margin: 2px", "Margin: 4px"], 
-            variable=margin_var,
-            command=update_preview
-        )
+        margin_var = ctk.StringVar(value=MARGIN_OPTIONS[0])
+        opt_margin = ctk.CTkOptionMenu(ctrl_frame, values=MARGIN_OPTIONS, variable=margin_var, command=update_preview)
         opt_margin.pack(side="left", padx=10)
 
-        # Final Save button
         def save_image():
-            if self.current_gauntlet_img:
-                save_path = filedialog.asksaveasfilename(
-                    defaultextension=".png",
-                    initialfile="gauntlet_template.png",
-                    initialdir=self.save_dir,
-                    title="Save Final Template",
-                    filetypes=[("PNG", "*.png")]
-                )
-                if save_path:
-                    self.current_gauntlet_img.save(save_path)
-                    self.update_status("Template saved successfully!", "green")
-                    preview_win.destroy()
-                    try:
-                        os.startfile(save_path)
-                    except Exception:
-                        pass
+            if state["result"] is None:
+                return
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                initialfile="gauntlet_template.png",
+                initialdir=self.save_dir,
+                title="Save Final Template",
+                filetypes=[("PNG", "*.png")],
+            )
+            if save_path:
+                state["result"].save(save_path)
+                self.update_status("Template saved successfully!", "green")
+                preview_win.destroy()
+                try:
+                    os.startfile(save_path)  # Windows only
+                except Exception:
+                    pass
 
         btn_save = ctk.CTkButton(ctrl_frame, text="Save Template", fg_color="#27AE60", hover_color="#2ECC71", command=save_image)
         btn_save.pack(side="right", padx=10)
 
-        # Forces the first render at 0px as soon as the window opens
-        update_preview("Margin: 0px")
+        # First render at 0px as soon as the window opens
+        update_preview(margin_var.get())
+
 
 if __name__ == "__main__":
     app = BadgeDownloaderApp()
