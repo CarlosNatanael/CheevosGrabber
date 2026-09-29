@@ -1,10 +1,12 @@
 from tkinter import filedialog
+from PIL import Image, ImageTk
 import customtkinter as ctk
 from PIL import Image
 import threading
 import requests
 import json
 import math
+import re
 import os
 import io
 
@@ -18,8 +20,16 @@ class BadgeDownloaderApp(ctk.CTk):
         super().__init__()
         self.title("CheevosGrabber") 
         self.geometry("450x600")
-        
-        # State variables
+
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, "icon.ico")
+            
+            self.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Error {e}")
+
+        # Variáveis de estado
         self.saved_user = ""
         self.saved_key = ""
         self.save_dir = os.path.join(os.getcwd(), "badges") # Default folder
@@ -287,8 +297,11 @@ class BadgeDownloaderApp(ctk.CTk):
             return
 
         try:
-            # Sorts selected files alphabetically to respect order (e.g., 001_, 002_)
-            file_paths = sorted(file_paths)
+            def numerical_sort_key(filepath):
+                filename = os.path.basename(filepath)
+                return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
+
+            file_paths = sorted(file_paths, key=numerical_sort_key)
 
             columns = 10
             rows = math.ceil(len(file_paths) / columns)
