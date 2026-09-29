@@ -162,23 +162,27 @@ class BadgeDownloaderApp(ctk.CTk):
             if "Achievements" not in data or not data["Achievements"]:
                 self.update_status("Nenhuma conquista encontrada para este ID.", "red")
                 return
-
-            achievements = data["Achievements"]
+            
+            achievements_list = list(data["Achievements"].values())
+            achievements_list.sort(key=lambda x: (int(x.get("DisplayOrder", 0)), int(x.get("ID", 0))))
 
             folder_name = os.path.join(target_dir, f"badges_{game_id}")
             os.makedirs(folder_name, exist_ok=True)
 
-            total = len(achievements)
+            total = len(achievements_list)
             count = 0
 
-            for ach_id, ach_data in achievements.items():
+            # O enumerate
+            for index, ach_data in enumerate(achievements_list, start=1):
                 badge_name = ach_data.get("BadgeName")
                 if badge_name:
                     img_url = BADGE_URL.format(badge_name)
                     img_res = requests.get(img_url)
                     
                     if img_res.status_code == 200:
-                        save_path = os.path.join(folder_name, f"{badge_name}.png")
+                        # Adiciona o prefixo numérico para forçar a ordem no explorador de ficheiros
+                        file_name = f"{index:03d}_{badge_name}.png"
+                        save_path = os.path.join(folder_name, file_name)
                         with open(save_path, "wb") as f:
                             f.write(img_res.content)
                 
@@ -208,7 +212,7 @@ class BadgeDownloaderApp(ctk.CTk):
         preview_win = ctk.CTkToplevel(self)
         preview_win.title(f"Template do Jogo {game_id}")
         preview_win.geometry("700x500")
-        preview_win.grab_set() # Foca nesta janela
+        preview_win.grab_set()
 
         # Frame rolável para o grid de imagens
         scroll_frame = ctk.CTkScrollableFrame(preview_win, fg_color="transparent")
@@ -234,14 +238,17 @@ class BadgeDownloaderApp(ctk.CTk):
                 self.after(0, lambda: lbl_loading.configure(text="Nenhuma conquista encontrada.", text_color="red"))
                 return
 
-            achievements = data["Achievements"]
+            achievements_list = list(data["Achievements"].values())
+            achievements_list.sort(key=lambda x: (int(x.get("DisplayOrder", 0)), int(x.get("ID", 0))))
+
             self.after(0, lambda: lbl_loading.destroy())
 
             columns = 10
             row = 0
             col = 0
 
-            for ach_id, ach_data in achievements.items():
+            # Iteramos a lista ordenada
+            for ach_data in achievements_list:
                 badge_name = ach_data.get("BadgeName")
                 if badge_name:
                     img_url = BADGE_URL.format(badge_name)
@@ -250,7 +257,7 @@ class BadgeDownloaderApp(ctk.CTk):
                     if img_res.status_code == 200:
                         image_data = Image.open(io.BytesIO(img_res.content))
                         ctk_img = ctk.CTkImage(light_image=image_data, dark_image=image_data, size=(64, 64))
-
+                        
                         self.after(0, self.add_image_to_grid, scroll_frame, ctk_img, row, col)
                         
                         col += 1
