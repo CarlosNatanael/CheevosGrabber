@@ -286,7 +286,6 @@ class BadgeDownloaderApp(ctk.CTk):
         lbl.grid(row=row, column=col, padx=0, pady=0)
 
     def create_gauntlet_template(self):
-        # Opens window for the user to select the downloaded icons
         file_paths = filedialog.askopenfilenames(
             title="Select badges for the template",
             initialdir=self.save_dir,
@@ -297,44 +296,102 @@ class BadgeDownloaderApp(ctk.CTk):
             return
 
         try:
+            # Natural sorting to respect 1.png, 2.png, 10.png, etc.
             def numerical_sort_key(filepath):
                 filename = os.path.basename(filepath)
                 return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
 
             file_paths = sorted(file_paths, key=numerical_sort_key)
+            
+            # Opens the new preview window instead of saving directly
+            self.show_gauntlet_preview(file_paths)
 
+        except Exception as e:
+            self.update_status(f"Error loading files: {str(e)}", "red")
+
+    def show_gauntlet_preview(self, file_paths):
+        # Creates the Toplevel window for the preview
+        preview_win = ctk.CTkToplevel(self)
+        preview_win.title("Gauntlet Preview")
+        preview_win.geometry("800x600")
+        preview_win.grab_set()
+
+        # Top bar with controls (Margin and Save)
+        ctrl_frame = ctk.CTkFrame(preview_win)
+        ctrl_frame.pack(fill="x", padx=10, pady=10)
+
+        # Variable to store the image in memory
+        self.current_gauntlet_img = None
+
+        # Scrollable frame to display the image (useful for games with hundreds of achievements)
+        scroll_frame = ctk.CTkScrollableFrame(preview_win, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        img_label = ctk.CTkLabel(scroll_frame, text="")
+        img_label.pack(pady=10)
+
+        # Function that recreates the entire image every time the margin changes
+        def update_preview(selected_margin):
+            margin = int(selected_margin.replace("Margin:", "").replace("px", "").strip())
+            
             columns = 10
             rows = math.ceil(len(file_paths) / columns)
 
-            template_img = Image.new('RGBA', (columns * 64, rows * 64), (0, 0, 0, 0))
+            total_width = (columns * 64) + ((columns - 1) * margin if columns > 1 else 0)
+            total_height = (rows * 64) + ((rows - 1) * margin if rows > 1 else 0)
 
-            for index, file_path in enumerate(file_paths):
-                img = Image.open(file_path).convert("RGBA")
+            template_img = Image.new('RGBA', (total_width, total_height), (0, 0, 0, 0))
+
+            for index, fp in enumerate(file_paths):
+                img = Image.open(fp).convert("RGBA")
                 img = img.resize((64, 64))
-                x = (index % columns) * 64
-                y = (index // columns) * 64
+                col_idx = index % columns
+                row_idx = index // columns
                 
+                x = (col_idx * 64) + (col_idx * margin)
+                y = (row_idx * 64) + (row_idx * margin)
                 template_img.paste(img, (x, y))
 
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".png",
-                initialfile="gauntlet_template.png",
-                initialdir=self.save_dir,
-                title="Save Final Template",
-                filetypes=[("PNG", "*.png")]
-            )
+            self.current_gauntlet_img = template_img
+            
+            # Updates the CustomTkinter Image in the interface
+            ctk_img = ctk.CTkImage(light_image=template_img, dark_image=template_img, size=template_img.size)
+            img_label.configure(image=ctk_img)
+            img_label.image = ctk_img
 
-            if save_path:
-                template_img.save(save_path)
-                self.update_status(f"Gauntlet template saved successfully!", "green")
+        margin_var = ctk.StringVar(value="Margin: 0px")
+        opt_margin = ctk.CTkOptionMenu(
+            ctrl_frame, 
+            values=["Margin: 0px", "Margin: 1px", "Margin: 2px", "Margin: 4px"], 
+            variable=margin_var,
+            command=update_preview
+        )
+        opt_margin.pack(side="left", padx=10)
 
-                try:
-                    os.startfile(save_path)
-                except Exception:
-                    pass 
+        # Final Save button
+        def save_image():
+            if self.current_gauntlet_img:
+                save_path = filedialog.asksaveasfilename(
+                    defaultextension=".png",
+                    initialfile="gauntlet_template.png",
+                    initialdir=self.save_dir,
+                    title="Save Final Template",
+                    filetypes=[("PNG", "*.png")]
+                )
+                if save_path:
+                    self.current_gauntlet_img.save(save_path)
+                    self.update_status("Template saved successfully!", "green")
+                    preview_win.destroy()
+                    try:
+                        os.startfile(save_path)
+                    except Exception:
+                        pass
 
-        except Exception as e:
-            self.update_status(f"Error creating template: {str(e)}", "red")
+        btn_save = ctk.CTkButton(ctrl_frame, text="Save Template", fg_color="#27AE60", hover_color="#2ECC71", command=save_image)
+        btn_save.pack(side="right", padx=10)
+
+        # Forces the first render at 0px as soon as the window opens
+        update_preview("Margin: 0px")
 
 if __name__ == "__main__":
     app = BadgeDownloaderApp()
