@@ -182,7 +182,7 @@ class BadgeDownloaderApp(ctk.CTk):
 
         # Sidebar footer
         footer = ctk.CTkLabel(
-            sidebar, text="v1.0 • Made for the RA community",
+            sidebar, text="v0.0.4 • Made for the RA community",
             font=("Arial", 10), text_color=COLORS["text_muted"]
         )
         footer.grid(row=7, column=0, padx=20, pady=15, sticky="sw")
