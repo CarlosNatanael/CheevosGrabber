@@ -79,15 +79,18 @@ def fetch_achievements(user, api_key, game_id, set_type="Official"):
     return achievements
 
 
-def build_gauntlet_image(images, margin):
-    rows = math.ceil(len(images) / GRID_COLUMNS)
-    total_width = GRID_COLUMNS * BADGE_SIZE + (GRID_COLUMNS - 1) * margin
+def build_gauntlet_image(images, margin, columns):
+    if columns < 1:
+        columns = 1  # Previne divisão por zero caso o campo fique vazio
+        
+    rows = math.ceil(len(images) / columns)
+    total_width = columns * BADGE_SIZE + (columns - 1) * margin
     total_height = rows * BADGE_SIZE + (rows - 1) * margin
 
     canvas = Image.new("RGBA", (total_width, total_height), (0, 0, 0, 0))
     for index, img in enumerate(images):
-        col_idx = index % GRID_COLUMNS
-        row_idx = index // GRID_COLUMNS
+        col_idx = index % columns
+        row_idx = index // columns
         x = col_idx * (BADGE_SIZE + margin)
         y = row_idx * (BADGE_SIZE + margin)
         canvas.paste(img, (x, y))
@@ -182,7 +185,7 @@ class BadgeDownloaderApp(ctk.CTk):
 
         # Sidebar footer
         footer = ctk.CTkLabel(
-            sidebar, text="v0.0.4 • Made for the RA community",
+            sidebar, text="v0.0.5 • Made for the RA community",
             font=("Arial", 10), text_color=COLORS["text_muted"]
         )
         footer.grid(row=7, column=0, padx=20, pady=15, sticky="sw")
@@ -534,6 +537,13 @@ class BadgeDownloaderApp(ctk.CTk):
             ctrl_frame, text="Adjustments", font=("Arial", 14, "bold")
         ).pack(side="left", padx=20, pady=15)
 
+        # Novo campo de colunas
+        ctk.CTkLabel(ctrl_frame, text="Columns:", font=("Arial", 12)).pack(side="left", padx=(10, 5))
+        ent_columns = ctk.CTkEntry(ctrl_frame, width=50, height=36)
+        ent_columns.insert(0, str(GRID_COLUMNS))
+        ent_columns.configure(state="disabled") # Desativado até carregar as imagens
+        ent_columns.pack(side="left", padx=(0, 15), pady=15)
+
         margin_var = ctk.StringVar(value=MARGIN_OPTIONS[0])
         opt_margin = ctk.CTkOptionMenu(
             ctrl_frame, values=MARGIN_OPTIONS, variable=margin_var,
@@ -563,10 +573,16 @@ class BadgeDownloaderApp(ctk.CTk):
 
         state = {"images": [], "result": None}
 
-        def update_preview(selected_margin):
+        def update_preview(*args):
             if not state["images"]:
                 return
-            template_img = build_gauntlet_image(state["images"], parse_margin(selected_margin))
+            
+            try:
+                cols = int(ent_columns.get())
+            except ValueError:
+                cols = 10 # Fallback se estiver vazio ou com texto inválido
+
+            template_img = build_gauntlet_image(state["images"], parse_margin(margin_var.get()), cols)
             state["result"] = template_img
             ctk_img = ctk.CTkImage(
                 light_image=template_img, dark_image=template_img,
@@ -594,6 +610,7 @@ class BadgeDownloaderApp(ctk.CTk):
                 except Exception:
                     pass
 
+        ent_columns.bind("<KeyRelease>", update_preview)
         opt_margin.configure(command=update_preview)
         btn_save.configure(command=save_image)
 
@@ -602,8 +619,9 @@ class BadgeDownloaderApp(ctk.CTk):
             lbl_loading.destroy()
             img_label.pack(pady=20)
             opt_margin.configure(state="normal")
+            ent_columns.configure(state="normal") # Ativar campo após carregar
             btn_save.configure(state="normal")
-            update_preview(margin_var.get())
+            update_preview()
 
         def worker():
             try:
@@ -662,6 +680,12 @@ class BadgeDownloaderApp(ctk.CTk):
             ctrl_frame, text="⚔  Gauntlet", font=("Arial", 14, "bold")
         ).pack(side="left", padx=20, pady=15)
 
+        # Novo campo de colunas
+        ctk.CTkLabel(ctrl_frame, text="Columns:", font=("Arial", 12)).pack(side="left", padx=(10, 5))
+        ent_columns = ctk.CTkEntry(ctrl_frame, width=50, height=36)
+        ent_columns.insert(0, str(GRID_COLUMNS))
+        ent_columns.pack(side="left", padx=(0, 15), pady=15)
+
         margin_var = ctk.StringVar(value=MARGIN_OPTIONS[0])
         opt_margin = ctk.CTkOptionMenu(
             ctrl_frame, values=MARGIN_OPTIONS, variable=margin_var,
@@ -681,8 +705,13 @@ class BadgeDownloaderApp(ctk.CTk):
                   for fp in file_paths]
         state = {"result": None}
 
-        def update_preview(selected_margin):
-            template_img = build_gauntlet_image(images, parse_margin(selected_margin))
+        def update_preview(*args):
+            try:
+                cols = int(ent_columns.get())
+            except ValueError:
+                cols = 10
+
+            template_img = build_gauntlet_image(images, parse_margin(margin_var.get()), cols)
             state["result"] = template_img
             ctk_img = ctk.CTkImage(
                 light_image=template_img, dark_image=template_img,
@@ -716,8 +745,9 @@ class BadgeDownloaderApp(ctk.CTk):
             command=save_image
         ).pack(side="right", padx=20, pady=15)
 
+        ent_columns.bind("<KeyRelease>", update_preview)
         opt_margin.configure(command=update_preview)
-        update_preview(margin_var.get())
+        update_preview()
 
 
 if __name__ == "__main__":
