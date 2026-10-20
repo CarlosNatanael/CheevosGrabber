@@ -120,6 +120,12 @@ class BadgeDownloaderApp(ctk.CTk):
         self.setup_ui()
         apply_icon(self)
 
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def on_closing(self):
+        self.save_config()
+        self.destroy()
+
     # MAIN UI
     def setup_ui(self):
         # Main grid: sidebar (left) + content (right)
@@ -177,7 +183,8 @@ class BadgeDownloaderApp(ctk.CTk):
         self.chk_remember_var = ctk.BooleanVar(value=self.remember)
         ctk.CTkCheckBox(
             sidebar, text="Remember credentials",
-            variable=self.chk_remember_var, font=("Arial", 11)
+            variable=self.chk_remember_var, font=("Arial", 11),
+            command=self.save_config
         ).grid(row=6, column=0, padx=20, pady=(0, 20), sticky="nw")
 
         # Sidebar footer
@@ -360,6 +367,8 @@ class BadgeDownloaderApp(ctk.CTk):
             self.update_status("Please fill in username, API key, and Game ID.", COLORS["danger"])
             return
 
+        self.save_config()
+        
         self.lbl_game_title.configure(text="Searching...", text_color=COLORS["text_muted"])
         self.lbl_ach_count.configure(text="")
         self.lbl_game_icon.configure(image=None, text="...")
@@ -519,6 +528,8 @@ class BadgeDownloaderApp(ctk.CTk):
         if not user or not api_key or not game_id:
             self.update_status("Please fill in credentials and Game ID for preview.", COLORS["danger"])
             return
+
+        self.save_config()
 
         preview_win = ctk.CTkToplevel(self)
         preview_win.title(f"Preview — Game {game_id} ({set_type})")
